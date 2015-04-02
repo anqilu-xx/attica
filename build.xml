@@ -1,0 +1,54 @@
+<?xml version="1.0"?>
+<!-- 
+Build file for Attica Project
+
+Usage:
+ant <targetname>
+-->
+
+<project name="attica" default="jar" basedir=".">
+    <target name="init" description="Prepares the output directories">
+            <mkdir dir="build/" />
+	    <mkdir dir="dist/tmpDir/" />
+	    <mkdir dir="dist/database" />
+    </target>
+
+    <target name="javadoc" description="Produces the Java documentation">
+ 	<mkdir dir="dist/docs"/>
+    	<javadoc sourcepath="src/" packagenames="*" destdir="dist/docs"/>
+    </target>
+    
+    <target name="dist" depends="jar,javadoc" description="Produces the java documentation and the jar ready for distribution"/>
+
+    <target name="build" depends="init" description="Compiles the source code">
+            <javac srcdir="src/" includes="**/*.java" destdir="build/"/>
+    </target>
+
+
+    <target name="clean" description="Removes the build directories">
+    	   <delete dir="build/" />
+	   <delete dir="dist/attica.jar" />
+	   <delete dir="dist/attica.properties" />
+    </target>
+
+    <target name="cleanDatabase" description="Removes the database directories">
+           <delete dir="dist/database"/>
+	   <delete dir="dist/tmpDir"/>
+    </target>
+
+    <target name="cleanAll" depends="cleanDatabase,clean" description="Cleans up (removes) the output directories and the database directories">
+    	   <delete dir="dist/" />
+    </target>
+
+    <target name="rebuildAll" depends="clean,jar" description="Does a clean compile, but leaves the database directories intact"/>
+
+    <target name="all" depends="cleanAll,dist" description="Does a clean compile and runs the dist target"/>
+
+    <target name="jar" depends="build" description="Builds a jar file for attica">
+    	<!-- Copy properties file to the dist directory -->
+	<copy todir="dist">
+		<fileset dir="." includes="*.properties"/>
+	</copy>
+	<jar jarfile="dist/attica.jar" manifest="src/attica.manifest" basedir="build/"/>
+    </target>
+</project>

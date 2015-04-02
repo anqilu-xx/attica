@@ -1,0 +1,703 @@
+/*
+options{
+	STATIC=false;
+}
+*/
+
+PARSER_BEGIN(SQLParser)
+
+package org.dejave.attica.sql.parser;
+
+import java.io.InputStream;
+import java.io.ByteArrayInputStream;
+
+import java.util.List;
+import java.util.ArrayList;
+
+import org.dejave.attica.server.Statement;
+import org.dejave.attica.server.Query;
+import org.dejave.attica.server.ShowCatalog;
+import org.dejave.attica.server.TableCreation;
+import org.dejave.attica.server.TableDeletion;
+import org.dejave.attica.server.TupleInsertion;
+import org.dejave.attica.server.TableDescription;
+import org.dejave.attica.engine.algebra.*;
+import org.dejave.attica.model.*;
+import org.dejave.attica.storage.Catalog;
+import org.dejave.util.Pair;
+
+public class SQLParser {
+
+       private Catalog catalog;
+
+	public void setCatalog(Catalog cat) {
+	       this.catalog = cat;
+	}
+	
+	public static void main(String args[]) {
+		System.out.println("Reading from standard input...");
+		SQLParser t = new SQLParser(System.in);
+		try {
+			t.Start();
+			System.out.println("Thank you.");
+		} catch (Exception e) {
+			System.out.println("Oops.");
+			System.out.println(e.getMessage());
+			e.printStackTrace();
+		}
+	}
+}
+
+PARSER_END(SQLParser)
+
+
+SKIP :
+{
+		" "
+	|   "\t"
+	|   "\n"
+	|   "\r"
+}
+
+SKIP :
+{
+	< COMMENT_LINE: "--" (~["\n", "\r"])* ("\n" | "\r" | "\r\n") >
+}
+
+SKIP :
+{
+	< COMMENT_BLOCK: "/*" (~["*"])* "*" ("*" | (~["*","/"] (~["*"])* "*"))* "/">
+}
+
+
+TOKEN :	 /* Literals */
+{
+		< INTEGER_LITERAL: (["0"-"9"])+ >
+	|   < FLOATING_POINT_LITERAL:
+				(["0"-"9"])+ "." (["0"-"9"])+ (<EXPONENT>)?
+			|   "." (["0"-"9"])+ (<EXPONENT>)?
+			|   (["0"-"9"])+ (<EXPONENT>)
+			|   (["0"-"9"])+ (<EXPONENT>)?
+		>
+	|   < #EXPONENT: ["e","E"] (["+","-"])? (["0"-"9"])+ >
+	|   < STRING_LITERAL: "'" (~["'"])* ( "''" (~["'"])* )* "'" >
+}
+
+
+TOKEN :	 /* SQL Keywords */
+{
+		< ALL: "all" >
+	|   < AND: "and" >
+	|   < OR: "or" >
+	|   < NOT: "not" >
+	|   < SELECT: "select" >
+	|   < FROM: "from" >
+	|   < WHERE: "where" >
+	|   < ORDER: "order" >
+	|   < GROUP: "group" >
+	|   < MAX: "max" >
+	|   < MIN: "min" >
+	|   < HAVING: "having" >
+	|   < DISTINCT: "distinct" >
+	|   < IN: "in" >
+	|   < EXISTS: "exists" >
+	|   < COUNT: "count" >
+	|   < ASC: "asc" >
+	|   < DESC: "desc" >
+	|   < SUM: "sum" >
+	|   < BY: "by" >
+	|   < BETWEEN: "between" >
+	|   < CREATE: "create" >
+	|   < INSERT: "insert" >
+	|   < TABLE: "table" >
+	|   < VALUES: "values" >
+	|	< INTO:	"into" >
+	|	< DROP: "drop" >
+	|	< DESCRIBE: "describe" >
+	|	< CATALOG: "catalog" >
+}
+
+
+TOKEN :	 /* Separators and operators */
+{
+		< DOT: "." >
+	|   < COMMA: "," >
+	|   < LESS: "<" >
+	|   < LESSEQUAL: "<=" >
+	|   < GREATER: ">" >
+	|   < GREATEREQUAL: ">=" >
+	|   < EQUAL: "=" >
+	|   < NOTEQUAL: "!=" >
+	|   < NOTEQUAL2: "<>" >
+	|   < OPENPAR: "(" >
+	|   < CLOSEPAR: ")" >
+	|   < ASTERISK: "*" >
+	|   < SLASH: "/" >
+	|   < PLUS: "+" >
+	|   < MINUS: "-" >
+	|   < QUESTIONMARK: "?" >
+	|   < PERCENT: "%" >
+}
+
+TOKEN:		/* Types */
+{
+		< INTEGER: "integer" >
+	|	< LONG: "long" >
+	|	< CHAR: "character" >
+	|	< BYTE: "byte" >
+	|	< SHORT: "short" >
+	|	< DOUBLE: "double" >
+	|	< FLOAT: "float" >
+	|	< STRING: "string" >
+}
+
+
+TOKEN:	  /* Identifiers */
+{
+		< ID: (<LETTER>)+ ("_" | "$" | "#" | <DIGIT> | <LETTER>)* >
+	|   < #LETTER: ["A"-"Z", "a"-"z"] >
+	|   < #DIGIT: ["0"-"9"] >
+}
+
+
+/*
+TOKEN:
+{
+	< EMPTY: "" >
+}
+*/
+
+/****************************************************
+ ** The SQL grammar starts from this point forward **
+ ****************************************************/
+
+Statement Start() : 
+{
+	Object o = null;
+}
+{
+		o = Query()
+			{
+				// safe to ignore the warning since we are
+				// casting to the return type
+				@SuppressWarnings("unchecked")
+				List<AlgebraicOperator> ops =
+					(List<AlgebraicOperator>) o;
+				return new Query(ops);
+			}
+//	|	Update()
+	|	o = Create()
+			{
+				return new TableCreation((Table) o);
+			}
+	|	o = Drop()
+			{
+				return new TableDeletion((String) o);
+			}
+	|	o = Insert()
+			{
+				// safe to ignore the warning since we are
+				// casting to the return type
+				@SuppressWarnings("unchecked")
+				Pair<String, List<Comparable>> pair =
+				     (Pair<String, List<Comparable>>) o;
+				return new TupleInsertion(pair.first,
+							  pair.second);
+			}
+	|	Catalog()
+			{
+				return new ShowCatalog();
+			}
+	|	o = Describe()
+			{
+				return new TableDescription((String) o);
+			}
+}
+
+
+List<AlgebraicOperator> Query() : 
+{
+	List<AlgebraicOperator> algebra = new ArrayList<AlgebraicOperator>();
+	List<AlgebraicOperator> where = null;
+	Projection p = null;
+	Sort s = null;
+} 
+{
+	p = SelectClause()  
+		{
+			algebra.add(p);
+		}	
+	FromClause()  
+	(
+		where = WhereClause()
+			{
+				algebra.addAll(where);
+			}
+	)?
+		//{
+			//System.out.println("algebra for query: " + algebra);
+			//return algebra;
+		//}
+	(
+		s = SortClause()
+		        {
+				algebra.add(s);
+		        }
+	)?
+		{
+			return algebra;
+		}
+}
+
+Projection SelectClause() : 
+{
+	List<Variable> projections = new ArrayList<Variable>();
+} 
+{
+	<SELECT>  projections = AttributeList()
+		{
+			//System.out.println(projections);
+			Projection p = new Projection(projections);
+			return p;
+		}
+}
+
+
+void FromClause() : {}
+{
+	<FROM>  TableList()
+}
+
+List<AlgebraicOperator> WhereClause() : 
+{
+	List<AlgebraicOperator> v = null;
+}
+{
+	<WHERE>  v = BooleanExpression()
+		{
+			return v;
+		}
+}
+
+
+Sort SortClause() :
+{
+	List<Variable> attributes = new ArrayList<Variable>();
+}
+{
+	<ORDER> <BY> attributes = AttributeList()
+		{
+			Sort s = new Sort(attributes);
+			return s;
+		}
+}
+
+
+List<Variable> AttributeList() : 
+{
+	List<Variable> v = new ArrayList<Variable>();
+	Variable var = null;
+}
+{
+	var = Attribute()  
+		{
+			v.add(var);
+		}
+	( <COMMA> var = Attribute() 
+		{
+			v.add(var);
+		}	
+	)*
+		{
+			return v;
+		}
+}
+
+void TableList() : {}
+{
+	Table()  ( <COMMA> Table() )*
+}
+
+String Table() : 
+{
+	String x = null;
+}
+{
+		LOOKAHEAD(AliasedTable()) AliasedTable()
+			{
+				throw new ParseException("Table aliases not "
+				                         + "yet supported.");
+			}
+	|	x = Identifier()
+			{
+				return x;
+			}
+}
+
+Variable Attribute() : 
+{
+	Variable var = null;
+} 
+{
+		LOOKAHEAD(QualifiedAttribute()) var = QualifiedAttribute()
+			{
+				return var;
+			}
+	|	Identifier()
+			{
+				throw new ParseException("Unqualified "
+				                         + "attributes not "
+							 + "yet supported.");
+			}
+}
+
+List<AlgebraicOperator> BooleanExpression() : 
+{
+	List<AlgebraicOperator> v = new ArrayList<AlgebraicOperator>();
+}
+{
+	v = DisjunctiveExpression() 
+		{
+			return v;
+		}
+}
+
+List<AlgebraicOperator> DisjunctiveExpression() : 
+{
+	List<AlgebraicOperator> v = new ArrayList<AlgebraicOperator>();
+}
+{
+	v = ConjunctiveExpression() 
+	( 
+		LOOKAHEAD(DisjunctionOperator())
+			DisjunctionOperator() 
+				{
+					throw new ParseException("Disjunction "
+					                         + "not yet "
+								 + "supported");
+				}
+			ConjunctiveExpression()
+	)*
+		{
+			return v;
+		}
+}
+
+List<AlgebraicOperator> ConjunctiveExpression() : 
+{
+	List<AlgebraicOperator> algebra = new ArrayList<AlgebraicOperator>();
+	AlgebraicOperator op = null;
+}
+{
+	op = UnaryExpression() 
+		{
+			algebra.add(op);
+		}
+	( 
+		LOOKAHEAD(ConjunctionOperator())
+			ConjunctionOperator() 
+			op = UnaryExpression() 
+				{
+					algebra.add(op);
+				}
+	)*
+		{
+			return algebra;
+		}
+}
+
+AlgebraicOperator UnaryExpression() : 
+{
+	AlgebraicOperator op = null;
+}
+{
+		NegationOperator()  BooleanExpression()
+			{
+				throw new ParseException("Negation not yet "
+				                         + "supported.");
+			}
+	|	<OPENPAR>  BooleanExpression()  <CLOSEPAR>
+			{
+				throw new ParseException("Nested expressions "
+				                         + "not yet "
+							 + "supported.");
+			}
+	|	op = RelationalExpression()
+			{
+				return op;
+			}
+}
+
+AlgebraicOperator RelationalExpression() : 
+{
+	Variable leftVar = null;
+	Variable rightVar = null;
+	String val = null;
+	Qualification.Relationship qual = Qualification.Relationship.EQUALS;
+	AlgebraicOperator op = null;
+}
+{
+	leftVar = Attribute()  
+	qual = QualificationOperator()  
+	( 
+		rightVar = Attribute() 
+			{
+				VariableVariableQualification vvarq =
+					new VariableVariableQualification(qual, 
+					    leftVar, rightVar);
+				op = new Join(vvarq);
+			}
+		| val = Literal() 
+			{
+				VariableValueQualification vvalq = 
+					new VariableValueQualification(qual,
+					    leftVar, val);
+				op = new Selection(vvalq);
+			}
+	)
+		{
+			return op;
+		}
+}
+
+
+void DisjunctionOperator() : {}
+{
+	<OR>
+}
+
+
+void ConjunctionOperator() : {}
+{
+	<AND>
+}
+
+
+void NegationOperator() : {}
+{
+	<NOT>
+}
+
+
+Qualification.Relationship QualificationOperator() : {}
+{
+		<LESS>
+			{
+				return Qualification.Relationship.LESS;
+			}
+	|	<LESSEQUAL>
+			{
+				return Qualification.Relationship.LESS_EQUALS;
+			}
+	|	<GREATER>
+			{
+				return Qualification.Relationship.GREATER;
+			}
+	|	<GREATEREQUAL>
+			{
+				return Qualification.Relationship.GREATER_EQUALS;
+			}
+	|	<EQUAL>
+			{
+				return Qualification.Relationship.EQUALS;
+			}
+	|	<NOTEQUAL>
+			{
+				return Qualification.Relationship.NOT_EQUALS;
+			}
+	|	<NOTEQUAL2>
+			{
+				return Qualification.Relationship.NOT_EQUALS;
+			}
+}
+
+
+void AliasedTable() : {}
+{
+	<ID>  <ID>
+}
+
+Variable QualifiedAttribute() : 
+{
+	Token table = null;
+	Token attr = null;
+}
+{
+	table = <ID>  <DOT>  attr = <ID> 
+		{
+			return new Variable(table.image, attr.image);
+		}
+}
+
+String Identifier() : 
+{
+	Token x = null;
+}
+{
+	x = <ID>
+		{
+			return x.image;
+		}
+}
+
+String Literal() : 
+{
+	Token x = null;
+}
+{
+		x = <STRING_LITERAL> 
+			{ 
+				String s = x.image;
+				s = s.substring(1, s.length()-1);
+				return s; 
+			}
+	|	x = <INTEGER_LITERAL> { return x.image; }
+	|	x = <FLOATING_POINT_LITERAL> { return x.image; }
+}
+
+Table Create() : 
+{
+	List<Attribute> v = null;
+	String table;
+}
+{
+	<CREATE>  <TABLE>  table = Identifier() <OPENPAR>  
+		v = AttributeDeclarationList(table)  <CLOSEPAR>
+			{
+				return new Table(table, v);
+			}
+}
+
+List<Attribute> AttributeDeclarationList(String table) : 
+{
+	List<Attribute> v = new ArrayList<Attribute>();
+	TableAttribute tab = null;
+}
+{
+	tab = AttributeDeclaration(table) 
+		{
+			v.add(tab);
+		}
+	( 
+		<COMMA>  tab = AttributeDeclaration(table)
+					{
+						v.add(tab);
+					} 
+	)*	
+		{
+			return v;
+		}
+}
+
+TableAttribute AttributeDeclaration(String table) : 
+{
+	String name = null;
+	Class<? extends Comparable> type = null;
+}
+{
+	name = Identifier()  type = Type()
+		{
+			return new TableAttribute(table, name, type);
+		}
+}
+
+Class<? extends Comparable> Type() : 
+{
+	Token token = null;
+}
+{
+		<INTEGER>
+			{
+				return Integer.class;
+			}
+	|	<LONG>
+			{
+				return Long.class;
+			}
+	|	<CHAR>
+			{
+				return Character.class;
+			}
+	|	<BYTE>
+			{
+				return Byte.class;
+			}
+	|	<SHORT>
+			{
+				return Short.class;
+			}
+	|	<DOUBLE>
+			{
+				return Double.class;
+			}
+	|	<FLOAT>
+			{
+				return Float.class;
+			}
+	|	<STRING>
+			{
+				return String.class;
+			}
+
+}
+
+Pair<String, List<Comparable>> Insert() : 
+{
+	String table = null;
+	List<Comparable> v = new ArrayList<Comparable>();
+}
+{
+	<INSERT>  <INTO>  table = Identifier()  <VALUES>  
+	<OPENPAR>  v = ValueList()  <CLOSEPAR>
+		{
+			return new Pair<String, List<Comparable>>(table, v);
+		}
+}
+
+List<Comparable> ValueList() : 
+{
+	List<Comparable> v = new ArrayList<Comparable>();
+	String l = null;
+}
+{
+	l = Literal() 
+		{
+			v.add(l);
+		}
+	( 
+		<COMMA>  l = Literal() 
+			{
+				v.add(l);
+			}
+	)*
+		{
+			return v;
+		}
+}
+
+String Drop () :
+{
+	String id = null;
+}
+{
+	<DROP>  <TABLE>  id = Identifier()
+		{
+			return id;
+		}
+}
+
+void Catalog () : {}
+{
+	<CATALOG>
+}
+
+String Describe () :
+{
+	String s = null;
+}
+{
+	<DESCRIBE>  <TABLE>  s = Identifier()
+		{
+			return s;
+		}
+}
